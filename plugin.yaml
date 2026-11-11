@@ -1,0 +1,73 @@
+name: household-fleet
+label: Household Fleet
+kind: backend
+version: 0.1.0
+author: rishiruben
+license: MIT
+homepage: https://github.com/rishiruben/hermes-household-fleet
+description: >
+  Household-fleet coordination for Hermes Agent. Two primitives a multi-agent
+  household needs and Hermes does not ship: (1) a deterministic message gate —
+  silence is the default, a message must be earned, and the same subject in the
+  same state can never be sent twice; tiers, quiet hours, per-agent and fleet
+  daily caps, a nudge ladder, and ack/park/snooze state are enforced in code, not
+  by agent discretion; (2) a task-registry mirror to Home Assistant, pushing a
+  per-agent summary into input_text entities and reconciling native todo lists.
+  The gate decides and records; delivery stays in the host agent's own channel,
+  so no credentials, tokens or chat ids live in this plugin.
+requires_hermes: ">=0.21"
+tags: [household, multi-agent, notifications, comms, home-assistant]
+
+provides_tools:
+  - fleet_comms_decide
+  - fleet_comms_send
+  - fleet_comms_state
+  - fleet_comms_status
+  - fleet_tasks_push
+provides_hooks: []
+
+config_schema:
+  enabled:
+    type: bool
+  quiet_hours_start:
+    type: str
+  quiet_hours_end:
+    type: str
+  timezone:
+    type: str
+  coalesce_minutes:
+    type: int
+  t2_per_agent_per_day:
+    type: int
+  t2_per_fleet_per_day:
+    type: int
+  t3_lines_per_agent_per_day:
+    type: int
+  t3_lines_per_digest:
+    type: int
+  auto_park_after_nudges:
+    type: int
+
+requires_env: []
+
+optional_env:
+  - name: FLEET_COMMS_HOME
+    description: "Directory holding the gate ledger and config (default: $HERMES_HOME/fleet/comms)"
+    prompt: "Comms state directory"
+    password: false
+  - name: FLEET_COMMS_CONFIG
+    description: "Path to a gate config.json (default: $FLEET_COMMS_HOME/config.json)"
+    prompt: "Gate config path"
+    password: false
+  - name: FLEET_TASKS_FILE
+    description: "Task registry JSON to mirror (default: $HERMES_HOME/tasks/tasks.json)"
+    prompt: "Task registry path"
+    password: false
+  - name: HASS_URL
+    description: "Home Assistant base URL used by fleet_tasks_push (default: http://homeassistant.local:8123)"
+    prompt: "Home Assistant URL"
+    password: false
+  - name: HASS_TOKEN
+    description: "Home Assistant long-lived access token used by fleet_tasks_push"
+    prompt: "Home Assistant long-lived access token"
+    password: true
