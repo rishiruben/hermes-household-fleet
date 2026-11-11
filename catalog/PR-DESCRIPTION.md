@@ -9,7 +9,7 @@ Body:
 ---
 
 Adds one entry: `plugin-catalog/household-fleet.yaml`.
-Pinned to `<sha>` (v0.1.0), release owner: `rishiruben`.
+Pinned to `3cdca4984878725372f33c1cc518684435f5c0b6` (v0.1.0), release owner: `rishiruben`.
 
 **What it does.** A multi-agent setup produces a stream of individually reasonable
 messages that add up to noise: the same reminder twice, a status report carrying no
