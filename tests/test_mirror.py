@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import types
 
 import pytest
 
@@ -152,6 +154,109 @@ def test_mirror_reports_every_agent_and_never_raises_per_agent(hf, monkeypatch, 
 def test_missing_token_is_an_explicit_error(hf):
     with pytest.raises(hf.ha_mirror.HomeAssistantError):
         hf.ha_mirror.call_service(hf.ha_mirror.MirrorConfig(token=""), "input_text", "set_value", {})
+
+
+# ─── secret scoping, profile home & input validation ─────────────────────────────────────────
+
+def _install_fake_secret_scope(monkeypatch, get_secret_fn, exc_cls=None):
+    agent_pkg = types.ModuleType("agent")
+    secret_mod = types.ModuleType("agent.secret_scope")
+    secret_mod.get_secret = get_secret_fn
+    if exc_cls is not None:
+        secret_mod.UnscopedSecretError = exc_cls
+    agent_pkg.secret_scope = secret_mod
+    monkeypatch.setitem(sys.modules, "agent", agent_pkg)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", secret_mod)
+
+
+def test_secret_uses_secret_scope_and_never_falls_back_to_environ(hf, monkeypatch):
+    monkeypatch.setenv("HASS_TOKEN", "launch-profile-leaked-token")
+    _install_fake_secret_scope(monkeypatch, lambda name, default="": "")
+    assert hf.ha_mirror._secret("HASS_TOKEN", "") == ""
+
+    _install_fake_secret_scope(monkeypatch, lambda name, default="": None)
+    assert hf.ha_mirror._secret("HASS_TOKEN", "fallback") == "fallback"
+
+    _install_fake_secret_scope(monkeypatch, lambda name, default="": "scoped-token")
+    assert hf.ha_mirror._secret("HASS_TOKEN", "") == "scoped-token"
+
+
+def test_secret_propagates_unscoped_secret_error(hf, monkeypatch):
+    class FakeUnscopedSecretError(RuntimeError):
+        pass
+
+    def _refuse(name, default=""):
+        raise FakeUnscopedSecretError(f"no scope for {name}")
+
+    monkeypatch.setenv("HASS_TOKEN", "launch-profile-leaked-token")
+    _install_fake_secret_scope(monkeypatch, _refuse, exc_cls=FakeUnscopedSecretError)
+    with pytest.raises(FakeUnscopedSecretError):
+        hf.ha_mirror._secret("HASS_TOKEN", "")
+
+
+def test_secret_falls_back_to_environ_only_on_import_error(hf, monkeypatch):
+    monkeypatch.setitem(sys.modules, "agent", None)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", None)
+    monkeypatch.setenv("HASS_TOKEN", "standalone-token")
+    assert hf.ha_mirror._secret("HASS_TOKEN", "") == "standalone-token"
+
+
+def test_fleet_tasks_push_propagates_unscoped_secret_error_and_drops_registry_path(hf, monkeypatch):
+    assert "registry_path" not in hf.tools.SCHEMAS["fleet_tasks_push"]["parameters"]["properties"]
+
+    class FakeUnscopedSecretError(RuntimeError):
+        pass
+
+    def _refuse(name, default=""):
+        raise FakeUnscopedSecretError(f"no scope for {name}")
+
+    _install_fake_secret_scope(monkeypatch, _refuse, exc_cls=FakeUnscopedSecretError)
+    with pytest.raises(FakeUnscopedSecretError):
+        hf.tools.fleet_tasks_push({"registry_path": "/etc/passwd"})
+
+
+@pytest.mark.parametrize("bad_name", ["../evil", "Finance", "foo-bar", "foo.bar", "a b", ""])
+def test_sync_todo_list_rejects_invalid_agent_names(hf, monkeypatch, bad_name):
+    called = []
+    monkeypatch.setattr(hf.ha_mirror, "call_service", lambda *a, **k: called.append((a, k)))
+    with pytest.raises(ValueError):
+        hf.ha_mirror.sync_todo_list(hf.ha_mirror.MirrorConfig(token="x"), bad_name, [])
+    assert called == []
+
+
+def test_mirror_rejects_invalid_agent_names_without_calling_ha(hf, monkeypatch, tmp_path):
+    path = tmp_path / "tasks.json"
+    path.write_text(json.dumps({
+        "agents": ["../evil", "finance_1"],
+        "tasks": [{"id": "1", "agent": "finance_1", "title": "Pay bill", "status": "open"}],
+    }))
+    sent = []
+
+    def fake_call(config, domain, service, payload, *, return_response=False):
+        sent.append((domain, service, payload))
+        return {}
+
+    monkeypatch.setattr(hf.ha_mirror, "call_service", fake_call)
+    result = hf.ha_mirror.mirror(path, sync_todo=False, config=hf.ha_mirror.MirrorConfig(token="x"))
+    assert result["ok"] is False
+    assert result["results"][0]["agent"] == "../evil"
+    assert result["results"][0]["ok"] is False
+    assert "invalid agent name" in result["results"][0]["error"]
+    assert result["results"][1]["agent"] == "finance_1"
+    assert result["results"][1]["ok"] is True
+    assert [p["entity_id"] for _d, _s, p in sent] == ["input_text.priority_finance_1"]
+
+
+def test_hermes_home_prefers_hermes_constants(hf, monkeypatch, tmp_path):
+    profile_home = tmp_path / "profile-b"
+    hc = types.ModuleType("hermes_constants")
+    hc.get_hermes_home = lambda: profile_home
+    monkeypatch.setitem(sys.modules, "hermes_constants", hc)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "launch-profile"))
+    assert hf.config.hermes_home() == profile_home
+
+    monkeypatch.setitem(sys.modules, "hermes_constants", None)
+    assert hf.config.hermes_home() == tmp_path / "launch-profile"
 
 
 # ─── optional live check ─────────────────────────────────────────────────────────────────────

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import gate as gate_mod
@@ -174,12 +173,16 @@ def fleet_comms_status(args: Dict[str, Any], **_: Any) -> str:
 
 
 def fleet_tasks_push(args: Dict[str, Any], **_: Any) -> str:
-    raw_path = str(args.get("registry_path") or "").strip()
-    path = Path(raw_path).expanduser() if raw_path else None
     agent = str(args.get("agent") or "").strip() or None
     sync_todo = not bool(args.get("no_todo", False))
     try:
-        result = mirror(path, agent=agent, sync_todo=sync_todo)
+        from agent.secret_scope import UnscopedSecretError  # type: ignore
+    except ImportError:
+        UnscopedSecretError = ()  # type: ignore[misc,assignment]
+    try:
+        result = mirror(agent=agent, sync_todo=sync_todo)
+    except UnscopedSecretError:
+        raise
     except FileNotFoundError as exc:
         return _err(str(exc))
     except Exception as exc:  # noqa: BLE001 - surfaced to the agent, never raised into the loop
@@ -265,8 +268,6 @@ SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {
-                "registry_path": {"type": "string",
-                                  "description": "Registry JSON path (default $HERMES_HOME/tasks/tasks.json)."},
                 "agent": {"type": "string", "description": "Optional: push one agent only."},
                 "no_todo": {"type": "boolean", "description": "Skip the to-do list, update input_text only."},
             },
