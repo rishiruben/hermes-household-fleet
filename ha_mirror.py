@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,18 +29,24 @@ STATUS_ICON = {"open": "○", "in_progress": "◐", "blocked": "⊗", "done": "�
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 DEFAULT_HASS_URL = "http://homeassistant.local:8123"
 INPUT_TEXT_MAX = 255
+AGENT_NAME_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+def _validate_agent_name(agent: str) -> str:
+    """Ensure an agent name is safe to embed in Home Assistant entity IDs."""
+    if not AGENT_NAME_RE.fullmatch(agent):
+        raise ValueError(f"invalid agent name {agent!r}: must match ^[a-z0-9_]+$")
+    return agent
 
 
 def _secret(name: str, default: str = "") -> str:
-    """Read a secret inside Hermes when possible, else from the plain environment."""
+    """Read a secret through Hermes's profile-scoped resolver; fall back to ``os.environ`` only standalone."""
     try:
         from agent.secret_scope import get_secret  # type: ignore
-        value = get_secret(name, default)
-        if value:
-            return str(value)
-    except Exception:
-        pass
-    return os.environ.get(name, default)
+    except ImportError:
+        return os.environ.get(name, default)
+    value = get_secret(name, default)
+    return default if value is None else str(value)
 
 
 @dataclass
@@ -175,6 +182,7 @@ def get_todo_items(config: MirrorConfig, entity: str) -> Optional[List[Dict[str,
 
 def sync_todo_list(config: MirrorConfig, agent: str, tasks: List[Task]) -> str:
     """Reconcile ``todo.tasks_<agent>`` with the registry. Returns a one-line report."""
+    _validate_agent_name(agent)
     entity = f"todo.tasks_{agent}"
     desired: Dict[str, Tuple[str, Optional[str]]] = {}
     for t in tasks:
@@ -226,6 +234,9 @@ def mirror(
     for name in targets:
         if name not in agents:
             results.append({"agent": name, "ok": False, "error": "not in registry"})
+            continue
+        if not AGENT_NAME_RE.fullmatch(name):
+            results.append({"agent": name, "ok": False, "error": "invalid agent name (must match ^[a-z0-9_]+$)"})
             continue
         summary = build_summary(name, tasks)
         row: Dict[str, Any] = {"agent": name, "chars": len(summary)}

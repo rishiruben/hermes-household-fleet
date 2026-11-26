@@ -22,8 +22,12 @@ DEFAULT_VALUE_TEST_PATTERN = (
 
 
 def hermes_home() -> Path:
-    """Resolve the Hermes home for the active profile (``$HERMES_HOME`` first)."""
-    return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    """Resolve the Hermes home for the active profile (``hermes_constants.get_hermes_home()`` inside Hermes)."""
+    try:
+        from hermes_constants import get_hermes_home  # type: ignore
+    except ImportError:
+        return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    return Path(get_hermes_home())
 
 
 def comms_home() -> Path:
